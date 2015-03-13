@@ -156,6 +156,45 @@ namespace MPODisparity
             return bmp;
         }
 
+        public static Bitmap Map2Bmp(Map<uint> imgf, uint mask, float k)
+        {
+            int h = imgf.H;
+            int w = imgf.W;
+            int stride = imgf.Stride;
+
+            var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+
+            BitmapData dstData = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+
+            int pixelSize = 4;
+
+            unsafe
+            {
+                var dstStride = dstData.Stride;
+                byte* dstRow = (byte*)dstData.Scan0;
+                int srcLineStart = 0;
+                for (int y = 0; y < h; ++y)
+                {
+                    int srcIdx = srcLineStart;
+                    int wb = w * pixelSize;
+                    for (int x = 0; x < wb; x += pixelSize)
+                    {
+                        byte b = (byte)((imgf[srcIdx] & mask) * k);
+                        dstRow[x] = b;
+                        dstRow[x + 1] = b;
+                        dstRow[x + 2] = b;
+                        dstRow[x + 3] = 255;
+                        ++srcIdx;
+                    }
+                    srcLineStart += stride;
+                    dstRow += dstStride;
+                }
+            }
+
+            bmp.UnlockBits(dstData);
+            return bmp;
+        }
+
         public static Bitmap Map2Bmp(Map<byte> imgf)
         {
             int h = imgf.H;
@@ -224,6 +263,14 @@ namespace MPODisparity
         public BufParam AsBufParam(BufParamScope flags)
         {
             return BufParam.Create(this, flags);
+        }
+
+        internal void memset(T v)
+        {
+            for (int i = 0; i < this.Buf.Length; ++i)
+            {
+                this.Buf[i] = v;
+            }
         }
     }
 

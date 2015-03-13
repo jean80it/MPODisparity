@@ -32,7 +32,7 @@ namespace MPODisparity
 
         public void Dispose()
         {
-            finish();
+            destroy();
         }
 
         #region openCL specific stuff
@@ -54,7 +54,7 @@ namespace MPODisparity
         {
             string kernelSource = File.ReadAllText(oclProgramSourcePath);
 
-            string[] kernelNames = new string[] { "colorConv", "scaleDown", "scaleDownH", "scaleUpH", "scaleUpV", "scaleDownHPrysm", "scaleUpLinHPrysm" };
+            string[] kernelNames = new string[] { "colorConv", "scaleDown", "scaleDownH", "scaleUpH", "scaleUpV", "scaleDownHPrism", "scaleUpLinHPrism", "blockMatch3x3W" };
 
             bool gpu = true;
             //err = clGetDeviceIDs(NULL, gpu ? CL_DEVICE_TYPE_GPU : CL_DEVICE_TYPE_CPU, 1, &device_id, NULL); 
@@ -116,8 +116,20 @@ namespace MPODisparity
             assert(err, "Error: Failed to create a command commands!");
         }
 
-        private void finish()
+        public void finish()
         {
+            Cl.Finish(_commandsQueue);
+        }
+
+        public void flush()
+        {
+            Cl.Flush(_commandsQueue);
+        }
+
+        private void destroy()
+        {
+            finish();
+
             //Clean up memory
             foreach (KeyValuePair<string, Kernel> k in _kernels)
             {
@@ -363,7 +375,7 @@ namespace MPODisparity
             return (((a - 1) / b) + 1) * b;
         }
 
-        public int doPrysm(Map<float> src, out Map<float> dst)
+        public int doPrism(Map<float> src, out Map<float> dst)
         {
             int w = intMultSup(src.W, 8);
             int h = src.H;
@@ -375,14 +387,41 @@ namespace MPODisparity
             IMem clBuf = Cl.CreateBuffer(_context, MemFlags.ReadWrite, dst.ByteSize, out err);
             dst.EnqueueWrite(_commandsQueue, clBuf);
 
-            invokeKernelNoSync(_kernels["scaleUpLinHPrysm"], new int[] { 0, 0 }, new int[] { w, h }, clBuf, dst.Stride, w, w);
-            invokeKernelNoSync(_kernels["scaleDownHPrysm"], new int[] { 0, 0 }, new int[] { w, h }, clBuf, dst.Stride, w, -w / 2);
-            invokeKernelNoSync(_kernels["scaleDownHPrysm"], new int[] { 0, 0 }, new int[] { w, h }, clBuf, dst.Stride, w / 2, -w / 4);
-            invokeKernelNoSync(_kernels["scaleDownHPrysm"], new int[] { 0, 0 }, new int[] { w, h }, clBuf, dst.Stride, w / 4, -w / 8);
+            invokeKernelNoSync(_kernels["scaleUpLinHPrism"], new int[] { 0, 0 }, new int[] { w, h }, clBuf, dst.Stride, w, w);
+            invokeKernelNoSync(_kernels["scaleDownHPrism"], new int[] { 0, 0 }, new int[] { w, h }, clBuf, dst.Stride, w, -w / 2);
+            invokeKernelNoSync(_kernels["scaleDownHPrism"], new int[] { 0, 0 }, new int[] { w, h }, clBuf, dst.Stride, w / 2, -w / 4);
+            invokeKernelNoSync(_kernels["scaleDownHPrism"], new int[] { 0, 0 }, new int[] { w, h }, clBuf, dst.Stride, w / 4, -w / 8);
 
             dst.EnqueueRead(_commandsQueue, clBuf);
 
             return w;
+        }
+
+        public void doDisp(Map<float> srcL, Map<float> srcR, out Map<uint> disp)
+        {
+            int w = srcL.W / 4; // original image w = prismW/4
+            int h = srcL.H;
+
+            int offs = w; // original image starts at prismW/4
+
+            disp = new Map<uint>(srcL.W, srcL.H, 1); // create a disp map big as the whole prism, 1 component (considering 2x ushort = 1 uint)
+            disp.memset(UInt32.MaxValue);
+
+
+            invokeKernelNoSync(_kernels["blockMatch3x3W"], new int[] { 1, 1, 1 }, new int[] { w-1, w/2-2, h },
+                srcL.AsBufParam(BufParamScope.In), 
+                offs,
+                srcL.Stride,
+                
+                srcR.AsBufParam(BufParamScope.In),
+                offs,
+                srcR.Stride,
+                
+                disp.AsBufParam(BufParamScope.InOut),
+                offs,
+                disp.Stride, 
+                
+                w-1);
         }
 
         //public Map<float> ScaleUp(Map<float> fm)
